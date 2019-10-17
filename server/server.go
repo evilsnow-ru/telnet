@@ -22,26 +22,43 @@ var (
 )
 
 type Server struct {
-	ch      chan int8
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
-	connId  uint64
-	Port    uint16
-	BufSize int
+	mu             sync.Mutex
+	ch             chan int8
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
+	connId         uint64
+	maxConnections uint16
+	listener       net.Listener
+	Port           uint16
+	BufSize        int
 }
 
 type stopServerHandler struct {
 	stopCh chan struct{}
+	server *Server
 }
 
 func (callback *stopServerHandler) NotifyInterrupt() {
 	fmt.Println("Notify server to stop properly")
 	close(callback.stopCh)
+	err := callback.server.Stop()
+	if err != nil {
+		fmt.Printf("Error stopping server: %s\n", err)
+	}
 }
 
 func (s *Server) Start() error {
 	fmt.Printf("Starting server at port %d\n", s.Port)
+
+	var i uint16
+	for i = 0; i < s.maxConnections; i++ {
+		s.ch <- 1
+	}
+
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.Port))
+	s.mu.Lock()
+	s.listener = listener
+	s.mu.Unlock()
 
 	if err != nil {
 		return err
@@ -70,6 +87,17 @@ func (s *Server) Start() error {
 			fmt.Println("Port successfully closed")
 			os.Exit(0)
 		}
+	}
+
+	return nil
+}
+
+func (s *Server) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.listener != nil {
+		return s.listener.Close()
 	}
 
 	return nil
@@ -106,7 +134,7 @@ func handleConnection(id uint64, conn net.Conn, stopCh chan struct{}, doneCh cha
 		data, isPrefix, err := reader.ReadLine()
 
 		if err != nil {
-			fmt.Printf("(id: %d) Error reading from connection: %s", id, err)
+			fmt.Printf("(id: %d) Error reading from connection: %s\n", id, err)
 			doneCh <- 1
 			return
 		}
@@ -138,15 +166,17 @@ func New(port, maxConnections uint16) (*Server, error) {
 	//Channel for stop notifications
 	stopChannel := make(chan struct{})
 
-	//Register callback to be processed if CTRL+C is pushed
-	system.RegisterCallback(&stopServerHandler{stopCh: stopChannel})
+	srv := &Server{
+		ch:             make(chan int8, maxConnections),
+		stopCh:         stopChannel,
+		maxConnections: maxConnections,
+		Port:           port,
+		BufSize:        DefaultBufSize,
+	}
 
-	return &Server{
-		ch:      make(chan int8, maxConnections),
-		stopCh:  stopChannel,
-		Port:    port,
-		BufSize: DefaultBufSize,
-	}, nil
+	//Register callback to be processed if CTRL+C is pushed
+	system.RegisterCallback(&stopServerHandler{stopCh: stopChannel, server: srv})
+	return srv, nil
 }
 
 func Start() error {

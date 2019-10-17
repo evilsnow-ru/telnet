@@ -1,6 +1,7 @@
 package system
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +17,12 @@ type Callback interface {
 	NotifyInterrupt()
 }
 
+func getCallbacks() []Callback {
+	rwLock.Lock()
+	defer rwLock.Unlock()
+	return callbacks
+}
+
 func RegisterSignalHandler() bool {
 	isRegistered := atomic.LoadUint32(&registeredFlag) == 1
 
@@ -29,11 +36,10 @@ func RegisterSignalHandler() bool {
 
 		go func(chan os.Signal) {
 			<-ch
-			rwLock.RLock()
-			defer rwLock.RUnlock()
+			fmt.Println("Received signal...")
 
 			if len(callbacks) > 0 {
-				for index := range callbacks {
+				for index := range getCallbacks() {
 					callbacks[index].NotifyInterrupt()
 				}
 			}

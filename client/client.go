@@ -24,6 +24,7 @@ func (handler *closeClientHandler) NotifyInterrupt() {
 	} else {
 		fmt.Println("Connection closed")
 	}
+	os.Exit(0)
 }
 
 func Start(host string, port uint16) error {
@@ -33,24 +34,26 @@ func Start(host string, port uint16) error {
 		return err
 	}
 
+	fmt.Printf("Connected to %s:%d\n", host, port)
+
 	//Register CTRL+C handler
 	interruptHandler := &closeClientHandler{connection: conn}
 	system.RegisterCallback(interruptHandler)
 
 	reader := bufio.NewReader(os.Stdin)
-	writer := bufio.NewWriter(conn)
 
 	for {
 		data, _, _ := reader.ReadLine()
 
 		if string(data) == "exit" {
 			//Ignore errors
-			_, _ = writer.Write([]byte("exit"))
+			_, _ = conn.Write([]byte("exit"))
 			interruptHandler.NotifyInterrupt()
 			return nil
 		}
 
-		n, err := writer.Write(data)
+		data = append(data, '\n')
+		n, err := conn.Write(data)
 
 		if err != nil {
 			interruptHandler.NotifyInterrupt()
@@ -61,7 +64,7 @@ func Start(host string, port uint16) error {
 			sended := n
 
 			for {
-				n, err = writer.Write(data[sended:])
+				n, err = conn.Write(data[sended:])
 
 				if err != nil {
 					interruptHandler.NotifyInterrupt()
